@@ -1,0 +1,166 @@
+/**
+ * 全局样式（学生演示项目）
+ * 定义 :root 主题变量（颜色、圆角、间距）、基础重置、以及通用 UI 类（.ui-card、.ui-btn、.ui-input 等），各页面可直接使用或覆盖。
+ */
+/* ========== 全局变量（主题、间距、圆角） ========== */
+:root {
+  /* 背景与卡片 */
+  --bg: #FFFFFF;
+  --card: rgba(255, 255, 255, 0.92);
+  --card-solid: #ffffff;
+  --text: #101828;
+  --muted: #667085;
+  --border: rgba(16, 24, 40, 0.10);
+  --shadow: 0 10px 30px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 20px 60px rgba(16, 24, 40, 0.12);
+
+  /* 主色与语义色 */
+  --primary: #2f6bff;
+  --primary-600: #2154ff;
+  --primary-soft: rgba(47, 107, 255, 0.12);
+  --danger: #e5484d;
+
+  /* 圆角与间距 */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --space: 16px;
+
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji',
+    'Segoe UI Emoji';
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--text);
+  background-color: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========== 重置与基础 ========== */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+/* ========== 通用 UI 类（页面标题、卡片、按钮、输入框、徽标） ========== */
+.page-title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.page-hint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ui-card {
+  background: var(--card-solid);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease,
+    color 0.16s ease;
+  user-select: none;
+}
+.ui-btn:active {
+  transform: translateY(1px);
+}
+.ui-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+.ui-btn-primary {
+  background: linear-gradient(180deg, var(--primary), var(--primary-600));
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(47, 107, 255, 0.22);
+}
+.ui-btn-primary:hover {
+  box-shadow: 0 14px 28px rgba(47, 107, 255, 0.28);
+}
+.ui-btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.92);
+}
+.ui-btn-soft {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(47, 107, 255, 0.20);
+}
+.ui-btn-danger {
+  background: rgba(229, 72, 77, 0.12);
+  color: var(--danger);
+  border-color: rgba(229, 72, 77, 0.24);
+}
+
+.ui-input,
+.ui-textarea,
+.ui-select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  outline: none;
+  background: rgba(255, 255, 255, 0.96);
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.ui-textarea {
+  resize: vertical;
+}
+.ui-input:focus,
+.ui-textarea:focus,
+.ui-select:focus {
+  border-color: rgba(47, 107, 255, 0.55);
+  box-shadow: 0 0 0 4px rgba(47, 107, 255, 0.12);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(47, 107, 255, 0.10);
+  border: 1px solid rgba(47, 107, 255, 0.18);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 12px;
+}

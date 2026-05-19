@@ -1,0 +1,25 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.10
+pydantic==2.11.4
+email-validator==2.2.0
+python-dotenv==1.1.0
+PyJWT==2.10.1
+bcrypt==4.3.0
+redis==5.2.1
+
+Pillow==11.2.1
+
+dashscope
+langchain-community
+langchain-core
+deepagents
+
+python-multipart
+oss2
+
+# 本地 CLIP 图片向量模型需要的依赖
+torch
+transformers
+modelscope

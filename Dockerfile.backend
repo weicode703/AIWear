@@ -1,0 +1,26 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 安装 psycopg2、Pillow 等依赖可能需要的系统库。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        libglib2.0-0 \
+        libgl1 \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY data ./data
+
+RUN mkdir -p /app/uploads /app/models
+
+EXPOSE 8000
+
+# 生产部署时让 FastAPI 监听容器内的 8000 端口。
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

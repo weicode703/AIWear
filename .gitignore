@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local notes and generated docs
+docs/
+
+# Environment Variables (IMPORTANT: Contains sensitive data!)
+.env
+.env.*
+!.env.example
+!.env.docker.example
+.env.local
+.env.production
+.env.*.local
+fronted/.env*
+!fronted/.env.example
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
+/aiwear.db
+
+# Uploads (user uploaded files)
+uploads/
+/uploads/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Model files (large binary files)
+*.pt
+*.pth
+*.onnx
+*.pb
+*.bin
+*.msgpack
+/models/
+
+# Frontend dependencies and build output
+fronted/node_modules/
+fronted/dist/
+
+# Archives
+*.zip
+*.rar
+*.7z
+
+# Temporary files
+tmp/
+temp/
+*.tmp
