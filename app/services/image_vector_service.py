@@ -32,6 +32,7 @@ class ImageVectorIndexService:
 
     _clip_model = None
     _clip_processor = None
+    VALID_IMAGE_CATEGORIES = {"clothing", "person", "outfit", "other"}
 
     def __init__(self) -> None:
         # decode_responses=True 表示 Redis 返回字符串，方便直接 json.loads。
@@ -42,12 +43,14 @@ class ImageVectorIndexService:
         image_data = self.read_image_data(oss_url)
         qwen_image_input = self.build_qwen_image_input(oss_url, image_data)
         description = self.describe_image(qwen_image_input)
+        image_category = self.infer_image_category_from_description(description)
         vector = self.encode_image(image_data)
 
         payload = {
             "userId": user_id,
             "ossUrl": oss_url,
             "description": description,
+            "imageCategory": image_category,
             "vector": vector,
             "vectorDimension": len(vector),
             "model": "clip-vit-base-patch16",
@@ -74,10 +77,12 @@ class ImageVectorIndexService:
             raise ValueError("搜索文字不能为空")
 
         query_vector = self.encode_text(query)
+        query_categories = self.infer_text_query_categories(query)
         results = self.search_similar_images(
             user_id=user_id,
             query_vector=query_vector,
             top_k=top_k,
+            allowed_categories=query_categories,
             description_keywords=self.infer_description_keywords(query),
         )
         return ImageSearchResponse(queryType="text", total=len(results), results=results)
@@ -93,7 +98,13 @@ class ImageVectorIndexService:
             raise ValueError("查询图片不能为空")
 
         query_vector = self.encode_image(image_data)
-        results = self.search_similar_images(user_id=user_id, query_vector=query_vector, top_k=top_k)
+        query_category = self.infer_image_category_from_vector(query_vector)
+        results = self.search_similar_images(
+            user_id=user_id,
+            query_vector=query_vector,
+            top_k=top_k,
+            allowed_categories=[query_category] if query_category != "other" else None,
+        )
         return ImageSearchResponse(queryType="image", total=len(results), results=results)
 
     def search_by_image_url(
@@ -115,6 +126,7 @@ class ImageVectorIndexService:
         query_vector: list[float],
         top_k: int,
         min_score: float | None = None,
+        allowed_categories: list[str] | None = None,
         description_keywords: list[str] | None = None,
     ) -> list[ImageSearchResultItem]:
         """从 Redis 读取当前用户的图片向量，并按余弦相似度排序。"""
@@ -122,6 +134,15 @@ class ImageVectorIndexService:
         redis_keys = self.redis_client.smembers(index_key)
         results: list[ImageSearchResultItem] = []
         score_threshold = settings.image_search_min_score if min_score is None else min_score
+        normalized_allowed_categories = (
+            {
+                category
+                for category in (self.normalize_image_category(item) for item in allowed_categories)
+                if category != "other"
+            }
+            if allowed_categories
+            else set()
+        )
 
         for redis_key in redis_keys:
             raw = self.redis_client.get(redis_key)
@@ -142,6 +163,13 @@ class ImageVectorIndexService:
                 continue
 
             description = str(payload.get("description", ""))
+            image_category = self.normalize_image_category(payload.get("imageCategory"))
+            if image_category == "other":
+                image_category = self.infer_image_category_from_description(description)
+
+            if normalized_allowed_categories and image_category not in normalized_allowed_categories:
+                continue
+
             if description_keywords and not self.description_matches_keywords(
                 description,
                 description_keywords,
@@ -159,6 +187,121 @@ class ImageVectorIndexService:
 
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:top_k]
+
+    def infer_text_query_categories(self, query: str) -> list[str] | None:
+        """根据搜索文字判断应该搜索衣服、人物，还是人物穿搭图。"""
+        has_person = self.contains_any(query, self.person_keywords())
+        has_wearing = self.contains_any(query, ["穿", "穿着", "试穿", "上身", "搭配", "效果"])
+        has_clothing = self.contains_any(query, self.clothing_keywords())
+
+        if has_person and (has_wearing or has_clothing):
+            return ["outfit"]
+        if has_person:
+            return ["person"]
+        if has_clothing:
+            return ["clothing"]
+        return None
+
+    def infer_image_category_from_vector(self, query_vector: list[float]) -> str:
+        """用 CLIP 零样本文本提示判断查询图片类型，图搜图先按类型过滤。"""
+        category_prompts = {
+            "clothing": "服装单品 商品图 衣服 裙子 衬衫 裤子 外套",
+            "person": "人物头像 人脸 半身照 肖像照片",
+            "outfit": "人物穿着服装 全身穿搭 试穿效果 模特上身图",
+            "other": "其他图片 背景 场景",
+        }
+        scores = {
+            category: self.cosine_similarity(query_vector, self.encode_text(prompt))
+            for category, prompt in category_prompts.items()
+        }
+        return max(scores, key=scores.get)
+
+    def infer_image_category_from_description(self, description: str) -> str:
+        """根据图片描述兜底判断图片类型，兼容 Redis 里已经存在的老数据。"""
+        has_person = self.contains_any(description, self.person_keywords())
+        has_clothing = self.contains_any(description, self.clothing_keywords())
+        has_wearing = self.contains_any(description, ["穿", "穿着", "试穿", "上身", "搭配", "合身"])
+
+        if has_person and (has_wearing or has_clothing):
+            return "outfit"
+        if has_person:
+            return "person"
+        if has_clothing:
+            return "clothing"
+        return "other"
+
+    def normalize_image_category(self, category: object) -> str:
+        """标准化图片类型，避免脏数据影响过滤。"""
+        category_text = str(category or "").strip().lower()
+        if category_text in self.VALID_IMAGE_CATEGORIES:
+            return category_text
+        return "other"
+
+    def contains_any(self, text: str, keywords: list[str]) -> bool:
+        """判断文本中是否包含任一关键词。"""
+        return any(keyword in text for keyword in keywords)
+
+    def clothing_keywords(self) -> list[str]:
+        """服装品类关键词。"""
+        return [
+            "衣服",
+            "服装",
+            "裙",
+            "裙子",
+            "连衣裙",
+            "半身裙",
+            "短裙",
+            "长裙",
+            "百褶裙",
+            "衬衫",
+            "衬衣",
+            "外套",
+            "大衣",
+            "风衣",
+            "夹克",
+            "裤",
+            "裤子",
+            "长裤",
+            "短裤",
+            "牛仔裤",
+            "西裤",
+            "上衣",
+            "T恤",
+            "针织衫",
+            "毛衣",
+            "西装",
+            "帽",
+            "帽子",
+            "鞋",
+            "鞋子",
+            "靴",
+            "靴子",
+            "包",
+            "包包",
+            "手提包",
+            "挎包",
+        ]
+
+    def person_keywords(self) -> list[str]:
+        """人物相关关键词。"""
+        return [
+            "人",
+            "人物",
+            "女生",
+            "女性",
+            "女士",
+            "女孩",
+            "男生",
+            "男性",
+            "男士",
+            "男孩",
+            "模特",
+            "头像",
+            "脸",
+            "人像",
+            "半身",
+            "全身",
+        ]
 
     def infer_description_keywords(self, query: str) -> list[str]:
         """根据搜索词提取服装品类词，用图片描述做二次过滤。"""

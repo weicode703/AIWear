@@ -40,12 +40,15 @@ class ImageVectorSearchApiTest(unittest.TestCase):
 
         self.original_encode_text = ImageVectorIndexService.encode_text
         self.original_encode_image = ImageVectorIndexService.encode_image
+        self.original_infer_image_category = ImageVectorIndexService.infer_image_category_from_vector
         ImageVectorIndexService.encode_text = lambda _self, _text: [1.0, 0.0, 0.0]
         ImageVectorIndexService.encode_image = lambda _self, _image_data: [0.0, 1.0, 0.0]
+        ImageVectorIndexService.infer_image_category_from_vector = lambda _self, _query_vector: "clothing"
 
     def tearDown(self) -> None:
         ImageVectorIndexService.encode_text = self.original_encode_text
         ImageVectorIndexService.encode_image = self.original_encode_image
+        ImageVectorIndexService.infer_image_category_from_vector = self.original_infer_image_category
 
         index_key = self.vector_service.build_user_index_key(self.user.id)
         for key in self.redis_keys:
@@ -56,7 +59,13 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         self.db.commit()
         self.db.close()
 
-    def _save_vector(self, oss_url: str, description: str, vector: list[float]) -> None:
+    def _save_vector(
+        self,
+        oss_url: str,
+        description: str,
+        vector: list[float],
+        image_category: str | None = None,
+    ) -> None:
         redis_key = self.vector_service.build_image_key(self.user.id, oss_url)
         index_key = self.vector_service.build_user_index_key(self.user.id)
         payload = {
@@ -66,6 +75,8 @@ class ImageVectorSearchApiTest(unittest.TestCase):
             "vector": vector,
             "vectorDimension": len(vector),
         }
+        if image_category:
+            payload["imageCategory"] = image_category
         self.redis_client.set(redis_key, json.dumps(payload, ensure_ascii=False))
         self.redis_client.sadd(index_key, redis_key)
         self.redis_keys.append(redis_key)
@@ -83,11 +94,13 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         self.assertEqual(self.white_url, body["data"]["results"][0]["ossUrl"])
         self.assertEqual(1, body["data"]["total"])
 
-    def test_text_search_filters_unrelated_description_for_clothing_category(self) -> None:
+    def test_text_search_for_clothing_item_excludes_person_and_outfit_images(self) -> None:
         skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
         face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
-        self._save_vector(skirt_url, "这是一条黑色百褶裙，通勤风格", [1.0, 0.0, 0.0])
-        self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [1.0, 0.0, 0.0])
+        outfit_url = f"https://oss.example.com/{uuid.uuid4().hex}-outfit.png"
+        self._save_vector(skirt_url, "这是一条黑色百褶裙，通勤风格", [1.0, 0.0, 0.0], "clothing")
+        self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [1.0, 0.0, 0.0], "person")
+        self._save_vector(outfit_url, "一位女性穿着黑色连衣裙，试穿效果", [1.0, 0.0, 0.0], "outfit")
 
         response = self.client.post(
             "/api/file/search/text",
@@ -100,8 +113,31 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         result_urls = [item["ossUrl"] for item in body["data"]["results"]]
         self.assertIn(skirt_url, result_urls)
         self.assertNotIn(face_url, result_urls)
+        self.assertNotIn(outfit_url, result_urls)
+
+    def test_text_search_for_person_wearing_clothes_returns_outfit_images(self) -> None:
+        skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
+        face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
+        outfit_url = f"https://oss.example.com/{uuid.uuid4().hex}-outfit.png"
+        self._save_vector(skirt_url, "这是一条黑色百褶裙，通勤风格", [1.0, 0.0, 0.0], "clothing")
+        self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [1.0, 0.0, 0.0], "person")
+        self._save_vector(outfit_url, "一位女性穿着黑色连衣裙，试穿效果", [1.0, 0.0, 0.0], "outfit")
+
+        response = self.client.post(
+            "/api/file/search/text",
+            json={"query": "女生穿黑色裙子", "topK": 10},
+            headers=self.headers,
+        )
+
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        result_urls = [item["ossUrl"] for item in body["data"]["results"]]
+        self.assertEqual([outfit_url], result_urls)
 
     def test_search_by_image_returns_most_similar_image_first(self) -> None:
+        face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
+        self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [0.0, 1.0, 0.0], "person")
+
         response = self.client.post(
             "/api/file/search/image",
             data={"topK": "2"},
@@ -114,6 +150,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         self.assertEqual(200, body["code"])
         self.assertEqual(self.black_url, body["data"]["results"][0]["ossUrl"])
         self.assertEqual(1, body["data"]["total"])
+        self.assertNotEqual(face_url, body["data"]["results"][0]["ossUrl"])
 
 
 if __name__ == "__main__":
