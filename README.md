@@ -12,26 +12,21 @@ http://8.130.189.100
 
 ## 项目截图
 
-截图建议放在这里，推荐路径为 `assets/screenshots/`。
-
-<!--
-截图放置位置：
-
 ### 登录与首页
+
 ![登录与首页](assets/screenshots/login.png)
 
-### 图片上传与我的图片
-![图片上传与我的图片](assets/screenshots/images.png)
-
 ### AI 图片编辑
+
 ![AI 图片编辑](assets/screenshots/edit.png)
 
 ### 图片合并
+
 ![图片合并](assets/screenshots/merge.png)
 
 ### RAG 穿搭问答
+
 ![RAG 穿搭问答](assets/screenshots/rag.png)
--->
 
 ## 核心功能
 
