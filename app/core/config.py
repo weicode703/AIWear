@@ -39,6 +39,7 @@ class Settings:
         self.clip_model_dir = Path(
             os.getenv("CLIP_MODEL_DIR", "./models/clip-vit-base-patch16")
         ).resolve()
+        self.image_search_min_score = float(os.getenv("IMAGE_SEARCH_MIN_SCORE", "0.25"))
 
         # 阿里百炼 / DashScope 模型配置，用来调用 qwen-vl-max。
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")

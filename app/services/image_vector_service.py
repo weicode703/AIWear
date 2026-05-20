@@ -74,7 +74,12 @@ class ImageVectorIndexService:
             raise ValueError("搜索文字不能为空")
 
         query_vector = self.encode_text(query)
-        results = self.search_similar_images(user_id=user_id, query_vector=query_vector, top_k=top_k)
+        results = self.search_similar_images(
+            user_id=user_id,
+            query_vector=query_vector,
+            top_k=top_k,
+            description_keywords=self.infer_description_keywords(query),
+        )
         return ImageSearchResponse(queryType="text", total=len(results), results=results)
 
     def search_by_image_data(
@@ -109,11 +114,14 @@ class ImageVectorIndexService:
         user_id: int,
         query_vector: list[float],
         top_k: int,
+        min_score: float | None = None,
+        description_keywords: list[str] | None = None,
     ) -> list[ImageSearchResultItem]:
         """从 Redis 读取当前用户的图片向量，并按余弦相似度排序。"""
         index_key = self.build_user_index_key(user_id)
         redis_keys = self.redis_client.smembers(index_key)
         results: list[ImageSearchResultItem] = []
+        score_threshold = settings.image_search_min_score if min_score is None else min_score
 
         for redis_key in redis_keys:
             raw = self.redis_client.get(redis_key)
@@ -130,17 +138,51 @@ class ImageVectorIndexService:
                 continue
 
             score = self.cosine_similarity(query_vector, [float(value) for value in vector])
+            if score < score_threshold:
+                continue
+
+            description = str(payload.get("description", ""))
+            if description_keywords and not self.description_matches_keywords(
+                description,
+                description_keywords,
+            ):
+                continue
+
             results.append(
                 ImageSearchResultItem(
                     redisKey=redis_key,
                     ossUrl=str(payload.get("ossUrl", "")),
-                    description=str(payload.get("description", "")),
+                    description=description,
                     score=round(score, 6),
                 )
             )
 
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:top_k]
+
+    def infer_description_keywords(self, query: str) -> list[str]:
+        """根据搜索词提取服装品类词，用图片描述做二次过滤。"""
+        keyword_groups = [
+            ["裙", "裙子", "连衣裙", "半身裙", "短裙", "长裙", "百褶裙"],
+            ["衬衫", "衬衣"],
+            ["外套", "大衣", "风衣", "夹克"],
+            ["裤", "裤子", "长裤", "短裤", "牛仔裤", "西裤"],
+            ["上衣", "T恤", "针织衫", "毛衣"],
+            ["帽", "帽子"],
+            ["鞋", "鞋子", "靴", "靴子"],
+            ["包", "包包", "手提包", "挎包"],
+        ]
+
+        matched: list[str] = []
+        for group in keyword_groups:
+            if any(keyword in query for keyword in group):
+                matched.extend(group)
+
+        return list(dict.fromkeys(matched))
+
+    def description_matches_keywords(self, description: str, keywords: list[str]) -> bool:
+        """描述里包含任一服装品类词，才认为和该品类搜索相关。"""
+        return any(keyword in description for keyword in keywords)
 
     def cosine_similarity(self, vector_a: list[float], vector_b: list[float]) -> float:
         """计算两个向量的余弦相似度，越接近 1 表示越相似。"""

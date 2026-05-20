@@ -81,7 +81,25 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(200, body["code"])
         self.assertEqual(self.white_url, body["data"]["results"][0]["ossUrl"])
-        self.assertGreater(body["data"]["results"][0]["score"], body["data"]["results"][1]["score"])
+        self.assertEqual(1, body["data"]["total"])
+
+    def test_text_search_filters_unrelated_description_for_clothing_category(self) -> None:
+        skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
+        face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
+        self._save_vector(skirt_url, "这是一条黑色百褶裙，通勤风格", [1.0, 0.0, 0.0])
+        self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [1.0, 0.0, 0.0])
+
+        response = self.client.post(
+            "/api/file/search/text",
+            json={"query": "一件黑色裙子", "topK": 10},
+            headers=self.headers,
+        )
+
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        result_urls = [item["ossUrl"] for item in body["data"]["results"]]
+        self.assertIn(skirt_url, result_urls)
+        self.assertNotIn(face_url, result_urls)
 
     def test_search_by_image_returns_most_similar_image_first(self) -> None:
         response = self.client.post(
@@ -95,7 +113,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(200, body["code"])
         self.assertEqual(self.black_url, body["data"]["results"][0]["ossUrl"])
-        self.assertGreater(body["data"]["results"][0]["score"], body["data"]["results"][1]["score"])
+        self.assertEqual(1, body["data"]["total"])
 
 
 if __name__ == "__main__":
