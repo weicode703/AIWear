@@ -16,9 +16,13 @@ from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
-from deepagents import create_deep_agent
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
+
+try:
+    from deepagents import create_deep_agent
+except ImportError:
+    create_deep_agent = None
 
 from app.api.routes.file import router as file_router
 from app.api.routes.rag import router as rag_router
@@ -289,16 +293,19 @@ def merge_image_tool(image_path1:str,image_path2:str,instruction:str)->str:
 skills_tools = [edit_image_tool, merge_image_tool]
 # 创建agent
 try:
-    deep_agent = create_deep_agent(
-        model=model,
-        tools=skills_tools,
-        skills=["/skills/"],
-        system_prompt="""
-        最终的输出格式JSON: {"success":true, "url":"字符串类型"} 
-        或者 {"success":false, "error":"字符串类型"}
-        """
-    )
-    print("Agent 已经启用")
+    if create_deep_agent is not None:
+        deep_agent = create_deep_agent(
+            model=model,
+            tools=skills_tools,
+            skills=["/skills/"],
+            system_prompt="""
+            最终的输出格式JSON: {"success":true, "url":"字符串类型"}
+            或者 {"success":false, "error":"字符串类型"}
+            """
+        )
+        print("Agent 已经启用")
+    else:
+        print("Agent 未启用：缺少 deepagents 依赖")
 except Exception as e:
     print("Agent 未启用")
     deep_agent = None
