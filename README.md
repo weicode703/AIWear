@@ -230,29 +230,9 @@ assets/screenshots/rag.png
 ![RAG 问答](assets/screenshots/rag.png)
 ```
 
-截图中不要出现真实邮箱、验证码、API Key、OSS 后台、服务器密码等敏感信息。
-
-## 安全说明
-
-以下内容不会提交到 GitHub：
-
-```text
-.env
-aiwear.db
-uploads/
-fronted/node_modules/
-fronted/dist/
-docs/
-*.zip
-__pycache__/
-```
-
-真实密钥只放在本地或服务器的 `.env` 文件中。上传 GitHub 前需要确认 Git 历史中没有提交过真实密钥。
 
 ## 后续优化方向
 
-- 使用 Alembic 管理数据库迁移。
 - 将 Redis 中的图片向量迁移到 PostgreSQL + pgvector 或专业向量数据库。
 - 将图片向量化和 AI 图片处理改成异步任务。
 - 给 RAG 问答增加更完整的召回评估和回答质量评估。
-- 配置域名、HTTPS 和线上监控。
