@@ -1,74 +1,62 @@
 # AIWear 智能穿搭平台
 
-AIWear 是一个面向服装穿搭场景的 AI Web 应用。项目重点放在 FastAPI 后端、数据库、Redis、对象存储、大模型接口、图片向量检索和 RAG 问答链路，前端页面主要用于功能演示和接口联调。
-
-这个项目适合用于展示：如何把大模型能力接入真实业务系统，而不是只写一个简单的模型调用脚本。
+AIWear 是一个面向服装穿搭场景的 AI Web 应用，核心目标是把大模型能力接入真实业务系统。项目重点在 **FastAPI 后端业务、用户认证、图片处理链路、对象存储、CLIP 向量检索、RAG 问答和 SSE 流式输出**，前端页面主要用于功能演示和接口联调。
 
 ## 在线演示
 
 ```text
-演示地址：http://8.130.189.100
+http://8.130.189.100
 ```
 
-说明：项目已部署到云服务器，可直接访问在线演示环境，体验用户登录、图片处理、检索和 RAG 问答等核心功能。
+项目已部署到云服务器，可直接体验用户登录、图片处理、图片检索和 RAG 穿搭问答等核心功能。
 
-## 项目亮点
+## 项目截图
 
-- **完整业务链路**：包含用户登录、邮箱验证码、JWT 鉴权、图片上传、我的图片、历史记录等基础 Web 应用能力。
-- **多模态 AI 能力**：接入 DashScope / 通义千问 / 通义万相，实现图片描述、图片编辑、图片合并等功能。
-- **图片向量检索**：使用 CLIP 生成图片向量，支持文搜图和图搜图。
-- **RAG 穿搭问答**：内置穿搭知识库，结合用户问题生成更贴近服装搭配场景的回答。
-- **SSE 流式输出**：RAG 问答支持服务端流式返回，页面可以逐段展示模型输出。
-- **部署实践**：使用 Docker Compose 组织后端、数据库、缓存、前端页面和 Nginx，方便项目在线演示。
+截图建议放在这里，推荐路径为 `assets/screenshots/`。
+
+<!--
+截图放置位置：
+
+### 登录与首页
+![登录与首页](assets/screenshots/login.png)
+
+### 图片上传与我的图片
+![图片上传与我的图片](assets/screenshots/images.png)
+
+### AI 图片编辑
+![AI 图片编辑](assets/screenshots/edit.png)
+
+### 图片合并
+![图片合并](assets/screenshots/merge.png)
+
+### RAG 穿搭问答
+![RAG 穿搭问答](assets/screenshots/rag.png)
+-->
+
+## 核心功能
+
+- **用户认证**：邮箱验证码登录 / 注册、JWT 登录状态维护、Redis token 黑名单。
+- **图片管理**：图片上传、我的图片、图片操作历史记录。
+- **AI 图片处理**：调用 DashScope / 通义万相完成单图编辑和双图合并。
+- **图片理解与向量化**：调用 Qwen-VL 生成图片描述，使用 CLIP 生成图片向量。
+- **图片检索**：支持文搜图和图搜图，根据向量相似度返回相关图片。
+- **RAG 穿搭问答**：基于本地穿搭知识库，结合用户问题生成穿搭建议。
+- **SSE 流式输出**：RAG 问答支持服务端流式返回，页面逐段展示模型输出。
 
 ## 技术栈
 
-| 分类 | 技术 |
+| 模块 | 技术 |
 |---|---|
-| 前端 | Vue 3、Vite、Element Plus、Pinia、Axios |
 | 后端 | FastAPI、Pydantic、SQLAlchemy、PyJWT |
 | 数据库 | PostgreSQL |
 | 缓存 | Redis |
-| 文件存储 | 本地存储 / 阿里云 OSS |
+| 文件存储 | 阿里云 OSS / 本地存储 |
 | AI 能力 | DashScope、Qwen-VL、通义万相、LangChain |
 | 向量检索 | CLIP-ViT-Base-Patch16、Redis |
+| 前端演示 | Vue 3、Vite、Element Plus、Pinia、Axios |
 | 部署 | Docker、Docker Compose、Nginx |
 
-说明：本项目的学习和实现重点是 **FastAPI 后端业务、AI 能力接入、RAG、SSE、数据库、Redis、OSS 和部署流程**。前端和 Nginx 主要作为演示页面和部署辅助组件使用。
-
-## 功能说明
-
-### 用户模块
-
-- 发送邮箱验证码
-- 邮箱验证码登录 / 注册
-- JWT 登录状态维护
-- 查询当前用户信息
-- 退出登录并将 token 加入 Redis 黑名单
-
-### 图片模块
-
-- 上传图片到本地或 OSS
-- 自动生成图片描述
-- 自动生成 CLIP 图片向量
-- 我的图片列表
-- AI 单图编辑
-- AI 双图合并
-- 图片编辑与合并历史记录
-
-### 检索模块
-
-- 文搜图：用户输入文字，系统生成文本向量后检索相似图片。
-- 图搜图：用户上传图片或传入图片 URL，系统生成图片向量后检索相似图片。
-
-### RAG 问答模块
-
-- 内置服装穿搭知识库
-- 支持穿搭建议问答
-- 支持多会话管理
-- 支持上下文记忆
-- 支持删除会话
-- 支持 SSE 流式输出
+说明：本项目的主要学习和实现重点是 **后端业务链路、AI 能力接入、RAG、SSE、数据库、Redis、OSS 和部署流程**。前端和 Nginx 主要作为演示页面和部署辅助组件使用。
 
 ## 系统架构
 
@@ -102,13 +90,23 @@ aiwear/
   docker-compose.yml     Docker Compose 部署编排
   Dockerfile.backend     后端镜像构建文件
   requirements.txt       Python 依赖
-  .env.example           本地环境变量模板
-  .env.docker.example    Docker 部署环境变量模板
 ```
 
-## 快速启动
+## 核心接口
 
-### 1. 准备环境变量
+| 模块 | 路径 | 说明 |
+|---|---|---|
+| 用户 | `/api/user/send-code` | 发送邮箱验证码 |
+| 用户 | `/api/user/auth` | 登录 / 注册 |
+| 图片 | `/api/file/upload/image` | 上传图片 |
+| 图片 | `/api/file/my-images` | 查询我的图片 |
+| 图片 | `/api/file/edit` | AI 图片编辑 |
+| 图片 | `/api/file/merge` | AI 图片合并 |
+| 检索 | `/api/file/search/text` | 文搜图 |
+| 检索 | `/api/file/search/image` | 图搜图 |
+| RAG | `/api/rag/chat/stream` | SSE 流式穿搭问答 |
+
+## 本地运行
 
 复制环境变量模板：
 
@@ -116,11 +114,7 @@ aiwear/
 cp .env.example .env
 ```
 
-然后按自己的环境填写数据库、Redis、DashScope、OSS 等配置。
-
-注意：`.env` 包含密钥和数据库密码，不能提交到 GitHub。
-
-### 2. Docker Compose 启动
+使用 Docker Compose 启动：
 
 ```bash
 docker compose up -d --build
@@ -129,110 +123,26 @@ docker compose up -d --build
 启动后访问：
 
 ```text
-本地前端页面：http://localhost
-本地后端接口：http://localhost:8000
-本地接口文档：http://localhost:8000/docs
-本地健康检查：http://localhost:8000/health
+前端页面：http://localhost
+后端文档：http://localhost:8000/docs
+健康检查：http://localhost:8000/health
 ```
 
-### 3. 本地开发启动后端
+说明：真实 `.env` 中包含数据库密码、模型密钥、OSS 密钥等敏感信息，本仓库只保留 `.env.example` 和 `.env.docker.example` 作为配置模板。
 
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+## 演示顺序
 
-### 4. 本地开发启动前端
-
-```bash
-cd fronted
-npm install
-npm run dev
-```
-
-前端默认访问：
-
-```text
-http://127.0.0.1:5173
-```
-
-## 环境变量示例
-
-本仓库只提交 `.env.example` 和 `.env.docker.example`，不提交真实 `.env`。
-
-常见配置项：
-
-```env
-DATABASE_URL=postgresql+psycopg2://aiwear:your-password@127.0.0.1:5432/aiwear
-REDIS_URL=redis://localhost:6379/0
-JWT_SECRET=please-change-this-to-a-random-secret
-
-DASHSCOPE_API_KEY=sk-your-dashscope-api-key
-
-STORAGE_BACKEND=oss
-OSS_ENDPOINT=https://oss-cn-beijing.aliyuncs.com
-OSS_BUCKET=your-bucket-name
-OSS_ACCESS_KEY_ID=your-access-key-id
-OSS_ACCESS_KEY_SECRET=your-access-key-secret
-OSS_BASE_URL=https://your-bucket-name.oss-cn-beijing.aliyuncs.com
-```
-
-## 核心接口
-
-| 模块 | 方法 | 路径 | 说明 |
-|---|---|---|---|
-| 用户 | POST | `/api/user/send-code` | 发送邮箱验证码 |
-| 用户 | POST | `/api/user/auth` | 登录 / 注册 |
-| 用户 | GET | `/api/user/me` | 查询当前用户 |
-| 用户 | POST | `/api/user/logout` | 退出登录 |
-| 图片 | POST | `/api/file/upload/image` | 上传图片 |
-| 图片 | GET | `/api/file/my-images` | 查询我的图片 |
-| 图片 | POST | `/api/file/edit` | AI 图片编辑 |
-| 图片 | POST | `/api/file/merge` | AI 图片合并 |
-| 检索 | POST | `/api/file/search/text` | 文搜图 |
-| 检索 | POST | `/api/file/search/image` | 图搜图 |
-| 历史 | GET | `/api/record/my` | 查询图片操作历史 |
-| RAG | POST | `/api/rag/chat` | 普通 RAG 问答 |
-| RAG | POST | `/api/rag/chat/stream` | SSE 流式 RAG 问答 |
-| RAG | GET | `/api/rag/conversations` | 查询 RAG 会话列表 |
-| RAG | DELETE | `/api/rag/conversations/{conversation_id}` | 删除 RAG 会话 |
-
-## 演示建议
-
-可以按这个顺序体验和介绍项目：
-
-1. 打开 README，先说明项目重点是后端业务链路和 AI 能力接入。
-2. 展示登录和用户鉴权流程，说明邮箱验证码、JWT 和 Redis token 黑名单。
-3. 上传一张服装或人物图片，说明图片会进入 OSS，并由后端生成描述和向量。
-4. 演示 AI 图片编辑，例如“给人物加一副黑色眼镜”。
-5. 演示图片合并，例如将人物图和服装图进行合并。
-6. 演示文搜图或图搜图，说明 CLIP 向量检索的作用。
-7. 演示 RAG 穿搭问答，说明知识库召回、上下文记忆和 SSE 流式输出。
-8. 最后简单说明 Docker Compose 如何把后端、数据库、Redis、前端演示页面和 Nginx 组织起来。
-
-## 截图建议
-
-建议后续在仓库中加入以下截图，放到 `assets/screenshots/` 目录：
-
-```text
-assets/screenshots/login.png
-assets/screenshots/images.png
-assets/screenshots/edit.png
-assets/screenshots/merge.png
-assets/screenshots/rag.png
-```
-
-加入截图后，可以在 README 中补充：
-
-```md
-![登录页面](assets/screenshots/login.png)
-![图片编辑](assets/screenshots/edit.png)
-![RAG 问答](assets/screenshots/rag.png)
-```
-
+1. 登录系统，说明邮箱验证码、JWT 和 Redis token 黑名单。
+2. 上传图片，说明图片文件进入 OSS，并由后端生成图片描述和向量。
+3. 演示 AI 图片编辑，例如“给人物加一副黑色眼镜”。
+4. 演示图片合并，例如将人物图和服装图进行合并。
+5. 演示文搜图或图搜图，说明 CLIP 向量检索的作用。
+6. 演示 RAG 穿搭问答，说明知识库召回、上下文记忆和 SSE 流式输出。
+7. 简单说明 Docker Compose 如何组织后端、数据库、Redis、前端演示页面和 Nginx。
 
 ## 后续优化方向
 
-- 将 Redis 中的图片向量迁移到 PostgreSQL + pgvector 或专业向量数据库。
+- 使用 Alembic 管理数据库迁移。
+- 将图片向量检索迁移到 PostgreSQL + pgvector 或专业向量数据库。
 - 将图片向量化和 AI 图片处理改成异步任务。
-- 给 RAG 问答增加更完整的召回评估和回答质量评估。
+- 为 RAG 增加更完整的召回评估和回答质量评估。
