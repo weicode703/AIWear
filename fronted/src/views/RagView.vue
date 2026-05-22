@@ -20,6 +20,7 @@ const conversations = ref([])
 const activeConversationId = ref(null)
 const messages = ref([])
 const isLoading = ref(false)
+const isThinking = ref(false)
 const isStreaming = ref(false)
 const thinkingExpanded = ref(true)
 const currentThinkingStep = ref(0)
@@ -56,6 +57,7 @@ const clearAnswerTimer = () => {
 
 const startThinkingProgress = () => {
   clearThinkingTimer()
+  isThinking.value = true
   thinkingExpanded.value = true
   currentThinkingStep.value = 0
   thinkingTimer = setInterval(() => {
@@ -65,15 +67,28 @@ const startThinkingProgress = () => {
   }, 1200)
 }
 
+const stopThinkingProgress = () => {
+  clearThinkingTimer()
+  isThinking.value = false
+  currentThinkingStep.value = thinkingSteps.length - 1
+}
+
+const updateMessageContent = (messageId, content) => {
+  const message = messages.value.find((item) => item.id === messageId)
+  if (message) {
+    message.content = content
+  }
+}
+
 const streamAssistantMessage = (messageItem, text) => {
   clearAnswerTimer()
-  messageItem.content = ''
+  updateMessageContent(messageItem.id, '')
   isStreaming.value = true
   const cleanText = normalizeAnswerText(text)
 
   let index = 0
   answerTimer = setInterval(() => {
-    messageItem.content = cleanText.slice(0, index + 1)
+    updateMessageContent(messageItem.id, cleanText.slice(0, index + 1))
     index += 1
     if (index >= cleanText.length) {
       clearAnswerTimer()
@@ -93,9 +108,12 @@ const normalizeAnswerText = (text) => {
 }
 
 const parseSseBlock = (block) => {
-  const dataLine = block.split('\n').find((line) => line.startsWith('data:'))
-  if (!dataLine) return null
-  const jsonText = dataLine.replace(/^data:\s*/, '').trim()
+  const jsonText = block
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.replace(/^data:\s*/, ''))
+    .join('\n')
+    .trim()
   return jsonText ? JSON.parse(jsonText) : null
 }
 
@@ -116,23 +134,48 @@ const readRagStream = async (payload, assistantMessage) => {
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
-  let pendingText = ''
-  let frameId = null
+  let rawAnswer = ''
+  let visualIndex = 0
+  let streamFinished = false
+  let visualPromise = null
 
-  // 真正的流式输出：收到后端 SSE 的 delta 后，下一帧直接追加到页面。
-  const flushPendingText = () => {
-    if (pendingText) {
-      assistantMessage.content = `${assistantMessage.content}${pendingText}`
-      pendingText = ''
+  window.__AIWEAR_RAG_STREAM_MODE__ = 'vue-proxy-message-update-v8-fast'
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const runVisualTypewriter = async () => {
+    isStreaming.value = true
+    while (!streamFinished || visualIndex < rawAnswer.length) {
+      if (visualIndex < rawAnswer.length) {
+        const remaining = rawAnswer.length - visualIndex
+        const step = remaining > 180 ? 8 : 4
+        visualIndex = Math.min(rawAnswer.length, visualIndex + step)
+        updateMessageContent(assistantMessage.id, rawAnswer.slice(0, visualIndex))
+      }
+      await sleep(18)
     }
-    frameId = null
+    visualPromise = null
   }
 
-  const appendStreamText = (text) => {
+  const applyDeltaText = (text) => {
     if (!text) return
-    pendingText += text
-    if (frameId !== null) return
-    frameId = requestAnimationFrame(flushPendingText)
+
+    // Some providers return cumulative text even when stream=true.
+    rawAnswer = text.startsWith(rawAnswer) ? text : `${rawAnswer}${text}`
+
+    if (!visualPromise) {
+      visualPromise = runVisualTypewriter()
+    }
+  }
+
+  const waitForTypewriterDone = async () => {
+    streamFinished = true
+    if (!visualPromise && rawAnswer) {
+      visualPromise = runVisualTypewriter()
+    }
+    if (visualPromise) {
+      await visualPromise
+    }
   }
 
   while (true) {
@@ -156,14 +199,17 @@ const readRagStream = async (payload, assistantMessage) => {
       }
 
       if (event.type === 'delta') {
-        appendStreamText(event.text || '')
+        stopThinkingProgress()
+        applyDeltaText(event.text || '')
       }
 
       if (event.type === 'done') {
+        stopThinkingProgress()
         activeConversationId.value = event.conversationId || activeConversationId.value
       }
 
       if (event.type === 'error') {
+        stopThinkingProgress()
         throw new Error(event.message || '生成回答失败')
       }
     }
@@ -173,14 +219,16 @@ const readRagStream = async (payload, assistantMessage) => {
   if (buffer.trim()) {
     const event = parseSseBlock(buffer)
     if (event?.type === 'delta') {
-      appendStreamText(event.text || '')
+      stopThinkingProgress()
+      applyDeltaText(event.text || '')
+    } else if (event?.type === 'done') {
+      stopThinkingProgress()
+      activeConversationId.value = event.conversationId || activeConversationId.value
     }
   }
-  if (frameId !== null) {
-    cancelAnimationFrame(frameId)
-  }
-  flushPendingText()
-  assistantMessage.content = normalizeAnswerText(assistantMessage.content)
+  await waitForTypewriterDone()
+  const message = messages.value.find((item) => item.id === assistantMessage.id)
+  updateMessageContent(assistantMessage.id, normalizeAnswerText(message?.content || ''))
 }
 
 const fetchConversations = async () => {
@@ -209,7 +257,7 @@ const startNewConversation = () => {
   messages.value = []
   question.value = ''
   clearAnswerTimer()
-  clearThinkingTimer()
+  stopThinkingProgress()
 }
 
 const removeConversation = async (conversationId) => {
@@ -259,8 +307,7 @@ const submitQuestion = async () => {
     }
 
     activeConversationId.value = result.conversationId || activeConversationId.value
-    clearThinkingTimer()
-    currentThinkingStep.value = thinkingSteps.length - 1
+    stopThinkingProgress()
 
     const assistantMessage = {
       id: `local-assistant-${Date.now()}`,
@@ -271,7 +318,7 @@ const submitQuestion = async () => {
     streamAssistantMessage(assistantMessage, answer)
     await fetchConversations()
   } catch (err) {
-    clearThinkingTimer()
+    stopThinkingProgress()
     clearAnswerTimer()
     ElMessage.error(err?.message || '问答请求失败')
   } finally {
@@ -309,11 +356,10 @@ const submitQuestionStream = async () => {
       conversationId: activeConversationId.value,
       topK: 5,
     }, assistantMessage)
-    clearThinkingTimer()
-    currentThinkingStep.value = thinkingSteps.length - 1
+    stopThinkingProgress()
     await fetchConversations()
   } catch (err) {
-    clearThinkingTimer()
+    stopThinkingProgress()
     clearAnswerTimer()
     messages.value = messages.value.filter((item) => item.id !== assistantMessage.id)
     ElMessage.error(err?.message || '问答请求失败')
@@ -380,10 +426,10 @@ onMounted(fetchConversations)
             class="message-row"
             :class="item.role === 'user' ? 'message-row--user' : 'message-row--assistant'"
           >
-            <div class="message-bubble">{{ item.content }}</div>
+            <div v-if="item.content || item.role === 'user'" class="message-bubble">{{ item.content }}</div>
           </div>
 
-          <div v-if="isLoading" class="rag-answer-box rag-answer-box--loading">
+          <div v-if="isThinking" class="rag-answer-box rag-answer-box--loading">
             <div class="thinking-head">
               <span>思考中...</span>
               <button type="button" class="thinking-toggle" @click="thinkingExpanded = !thinkingExpanded">

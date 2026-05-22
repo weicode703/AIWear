@@ -1,6 +1,7 @@
 import json
 import math
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -173,15 +174,20 @@ class RagService:
             yield {
                 "type": "progress",
                 "message": "正在组织回答",
-                "references": references,
+                "referenceCount": len(references),
             }
             for chunk, source in self.llm_service.stream_chat_answer(message, context, history_text):
                 model_source = source
-                answer_parts.append(chunk)
-                yield {
-                    "type": "delta",
-                    "text": chunk,
-                }
+                for index in range(0, len(chunk), 4):
+                    piece = chunk[index:index + 4]
+                    if not piece:
+                        continue
+                    answer_parts.append(piece)
+                    yield {
+                        "type": "delta",
+                        "text": piece,
+                    }
+                    time.sleep(0.015)
 
             answer = "".join(answer_parts).strip()
             if not answer:

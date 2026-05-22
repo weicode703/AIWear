@@ -94,10 +94,23 @@ class LLMService:
             temperature=0.3,
         )
 
+        previous_text = ""
         for response in responses:
             text = self.extract_dashscope_text(response)
-            if text:
-                yield text, "qwen"
+            if not text:
+                continue
+
+            # DashScope SDK versions differ: some stream cumulative text, others stream deltas.
+            # Normalize both shapes to true deltas so the UI can render smoothly.
+            if text.startswith(previous_text):
+                delta = text[len(previous_text):]
+                previous_text = text
+            else:
+                delta = text
+                previous_text = f"{previous_text}{text}"
+
+            if delta:
+                yield delta, "qwen"
 
     @staticmethod
     def extract_dashscope_text(response) -> str:
