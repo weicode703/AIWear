@@ -69,15 +69,43 @@ http://8.130.189.100
 
 ```mermaid
 flowchart LR
-    U["用户浏览器"] --> F["演示页面\nVue"]
-    F --> N["Nginx\n静态资源/接口转发"]
-    N --> B["FastAPI 后端\n项目重点"]
-    B --> P["PostgreSQL\n用户、图片、历史、RAG 会话"]
-    B --> R["Redis\n验证码、Token 黑名单、图片向量"]
-    B --> O["阿里云 OSS\n图片文件"]
-    B --> D["DashScope / Qwen\n图片理解、图片编辑、RAG 生成"]
-    B --> C["CLIP\n图片/文本向量"]
-    B --> K["本地穿搭知识库"]
+    U["用户浏览器"] --> FE["Vue 前端"]
+    FE --> NG["Nginx<br/>静态资源 / API 转发"]
+    NG --> BE["FastAPI 后端"]
+
+    BE --> AUTH["用户认证<br/>JWT / 验证码 / Token 黑名单"]
+    BE --> PG["PostgreSQL<br/>用户 / 图片 / 历史 / RAG 会话"]
+    BE --> RD["Redis<br/>验证码 / Token 黑名单 / 图片向量索引"]
+    BE --> OSS["阿里云 OSS<br/>图片文件存储"]
+
+    BE --> CLIP["CLIP<br/>图片向量 / 文本向量"]
+    CLIP --> RD
+
+    BE --> RAG["RAG 服务<br/>穿搭知识库召回"]
+    RAG --> KB["本地穿搭知识库<br/>data/rag"]
+    RAG --> LLM["DashScope / Qwen / DeepSeek"]
+
+    BE --> IMG["AI 图片处理<br/>图片理解 / 编辑 / 合并"]
+    IMG --> LLM
+```
+
+## 图片检索流程
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant FE as 前端
+    participant BE as FastAPI
+    participant CLIP as CLIP
+    participant Redis as Redis 向量索引
+    participant DB as PostgreSQL
+
+    User->>FE: 输入文本或上传参考图
+    FE->>BE: 调用文搜图 / 图搜图接口
+    BE->>CLIP: 生成文本向量或图片向量
+    BE->>Redis: 计算向量相似度并排序
+    BE->>DB: 查询图片元信息
+    BE-->>FE: 返回匹配图片列表
 ```
 
 ## 项目结构
