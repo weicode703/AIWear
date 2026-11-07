@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from PIL import Image
+from PIL import Image, ImageOps
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import HumanMessage
 from redis import Redis
@@ -33,28 +33,56 @@ class ImageVectorIndexService:
     _clip_model = None
     _clip_processor = None
     VALID_IMAGE_CATEGORIES = {"clothing", "person", "outfit", "other"}
+    IMAGE_ATTRIBUTE_PROMPTS = {
+        "category": {
+            "clothing": "一张服装单品商品图，画面主要展示衣服本身，没有模特穿着",
+            "person": "一张人物肖像或人像照片，重点是人的脸或上半身，不是服装商品图",
+            "outfit": "一张模特穿着服装的全身穿搭图或试穿效果图",
+            "other": "一张不属于服装或人物肖像的其他图片",
+        },
+        "color": {
+            "black": "以黑色为主的服装",
+            "white": "以白色为主的服装",
+            "blue": "以蓝色为主的服装",
+            "red": "以红色为主的服装",
+            "green": "以绿色为主的服装",
+            "yellow": "以黄色为主的服装",
+            "pink": "以粉色为主的服装",
+            "purple": "以紫色为主的服装",
+            "gray": "以灰色为主的服装",
+            "brown": "以棕色或咖啡色为主的服装",
+        },
+        "itemType": {
+            "dress": "连衣裙或裙子",
+            "shirt": "衬衫",
+            "coat": "外套、大衣或夹克",
+            "pants": "裤子",
+            "top": "上衣、T恤或毛衣",
+            "shoes": "鞋子或靴子",
+            "bag": "包包",
+        },
+    }
 
     def __init__(self) -> None:
         # decode_responses=True 表示 Redis 返回字符串，方便直接 json.loads。
         self.redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
 
     def index_image(self, oss_url: str, user_id: int) -> ImageVectorIndexResponse:
-        """生成图片描述和图片向量，并写入 Redis。"""
+        """先保存 CLIP 向量，再尽力补充描述，避免视觉模型故障让图片无法检索。"""
         image_data = self.read_image_data(oss_url)
-        qwen_image_input = self.build_qwen_image_input(oss_url, image_data)
-        description = self.describe_image(qwen_image_input)
-        image_category = self.infer_image_category_from_description(description)
         vector = self.encode_image(image_data)
 
         payload = {
             "userId": user_id,
             "ossUrl": oss_url,
-            "description": description,
-            "imageCategory": image_category,
+            "imageHash": self.image_content_hash(image_data),
+            "description": "",
+            "imageCategory": "other",
+            "imageAttributes": {"category": "other", "colors": [], "itemTypes": []},
             "vector": vector,
             "vectorDimension": len(vector),
             "model": "clip-vit-base-patch16",
-            "descriptionModel": "qwen-vl-max",
+            "descriptionModel": "qwen3.7-flash",
             "createdAt": datetime.now().isoformat(),
         }
 
@@ -62,6 +90,19 @@ class ImageVectorIndexService:
         index_key = self.build_user_index_key(user_id)
         self.redis_client.set(redis_key, json.dumps(payload, ensure_ascii=False))
         self.redis_client.sadd(index_key, redis_key)
+
+        description = ""
+        try:
+            qwen_image_input = self.build_qwen_image_input(oss_url, image_data)
+            description, image_attributes = self.parse_image_metadata_response(
+                self.describe_image(qwen_image_input)
+            )
+            payload["description"] = description
+            payload["imageCategory"] = image_attributes["category"]
+            payload["imageAttributes"] = image_attributes
+            self.redis_client.set(redis_key, json.dumps(payload, ensure_ascii=False))
+        except Exception as exc:
+            print(f"图片描述生成失败，已保留 CLIP 向量索引：{exc}")
 
         return ImageVectorIndexResponse(
             redisKey=redis_key,
@@ -84,6 +125,7 @@ class ImageVectorIndexService:
             top_k=top_k,
             allowed_categories=query_categories,
             description_keywords=self.infer_description_keywords(query),
+            query_text=query,
         )
         return ImageSearchResponse(queryType="text", total=len(results), results=results)
 
@@ -98,12 +140,14 @@ class ImageVectorIndexService:
             raise ValueError("查询图片不能为空")
 
         query_vector = self.encode_image(image_data)
-        query_category = self.infer_image_category_from_vector(query_vector)
+        query_attributes = self.infer_query_image_attributes(query_vector)
         results = self.search_similar_images(
             user_id=user_id,
             query_vector=query_vector,
             top_k=top_k,
-            allowed_categories=[query_category] if query_category != "other" else None,
+            exact_image_hash=self.image_content_hash(image_data),
+            query_attributes=query_attributes,
+            allow_low_score_fallback=False,
         )
         return ImageSearchResponse(queryType="image", total=len(results), results=results)
 
@@ -128,12 +172,29 @@ class ImageVectorIndexService:
         min_score: float | None = None,
         allowed_categories: list[str] | None = None,
         description_keywords: list[str] | None = None,
+        query_text: str | None = None,
+        exact_image_hash: str | None = None,
+        query_attributes: dict | None = None,
+        allow_low_score_fallback: bool = True,
     ) -> list[ImageSearchResultItem]:
         """从 Redis 读取当前用户的图片向量，并按余弦相似度排序。"""
         index_key = self.build_user_index_key(user_id)
-        redis_keys = self.redis_client.smembers(index_key)
-        results: list[ImageSearchResultItem] = []
-        score_candidates: list[ImageSearchResultItem] = []
+        redis_keys = list(self.redis_client.smembers(index_key))
+        if not redis_keys:
+            return []
+
+        pipeline = self.redis_client.pipeline(transaction=False)
+        for redis_key in redis_keys:
+            pipeline.get(redis_key)
+        raw_values = pipeline.execute()
+
+        strict_results: list[ImageSearchResultItem] = []
+        threshold_results: list[ImageSearchResultItem] = []
+        all_results: list[ImageSearchResultItem] = []
+        result_categories: dict[str, str] = {}
+        result_hashes: dict[str, str] = {}
+        result_attributes: dict[str, dict] = {}
+        rerank_scores: dict[str, float] = {}
         score_threshold = settings.image_search_min_score if min_score is None else min_score
         normalized_allowed_categories = (
             {
@@ -145,36 +206,60 @@ class ImageVectorIndexService:
             else set()
         )
 
-        for redis_key in redis_keys:
-            raw = self.redis_client.get(redis_key)
+        for redis_key, raw in zip(redis_keys, raw_values):
             if not raw:
                 continue
 
             try:
                 payload = json.loads(raw)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if not isinstance(payload, dict):
                 continue
 
             vector = payload.get("vector")
             if not isinstance(vector, list):
                 continue
 
-            score = self.cosine_similarity(query_vector, [float(value) for value in vector])
-            if score < score_threshold:
+            try:
+                stored_vector = [float(value) for value in vector]
+            except (TypeError, ValueError):
+                continue
+            if (
+                len(stored_vector) != len(query_vector)
+                or not stored_vector
+                or not all(math.isfinite(value) for value in stored_vector)
+                or not any(stored_vector)
+            ):
                 continue
 
-            item = ImageSearchResultItem(
+            score = self.cosine_similarity(query_vector, stored_vector)
+            result = ImageSearchResultItem(
                 redisKey=redis_key,
                 ossUrl=str(payload.get("ossUrl", "")),
                 description=str(payload.get("description", "")),
                 score=round(score, 6),
             )
-            score_candidates.append(item)
+            all_results.append(result)
 
-            description = str(payload.get("description", ""))
+            description = result.description
             image_category = self.normalize_image_category(payload.get("imageCategory"))
             if image_category == "other":
                 image_category = self.infer_image_category_from_description(description)
+            result_categories[redis_key] = image_category
+            result_hashes[redis_key] = str(payload.get("imageHash", ""))
+            image_attributes = self.normalize_image_attributes(
+                payload.get("imageAttributes"), description, image_category
+            )
+            result_attributes[redis_key] = image_attributes
+            rerank_scores[redis_key] = score + self.image_attribute_score(
+                query_attributes or {}, image_attributes
+            )
+
+            if score < score_threshold:
+                continue
+            threshold_results.append(result)
 
             if normalized_allowed_categories and image_category not in normalized_allowed_categories:
                 continue
@@ -185,14 +270,276 @@ class ImageVectorIndexService:
             ):
                 continue
 
-            results.append(item)
+            strict_results.append(result)
 
-        results.sort(key=lambda item: item.score, reverse=True)
-        if not results and (normalized_allowed_categories or description_keywords):
-            # Legacy indexes can have missing or inaccurate category/description metadata.
-            score_candidates.sort(key=lambda item: item.score, reverse=True)
-            results = score_candidates
-        return results[:top_k]
+        aspect_groups = self.infer_query_aspect_groups(query_text or "")
+        query_colors = self.normalize_attribute_values([query_text or ""], "color")
+        query_item_types = self.normalize_attribute_values([query_text or ""], "itemType")
+        aspect_results = [
+            item
+            for item in all_results
+            if aspect_groups
+            and all(self.description_matches_keywords(item.description, group) for group in aspect_groups)
+        ]
+        if query_colors:
+            color_aspect_results = [
+                item
+                for item in aspect_results
+                if set(result_attributes[item.redisKey]["colors"]) & set(query_colors)
+            ]
+            color_attribute_results = [
+                item
+                for item in all_results
+                if set(result_attributes[item.redisKey]["colors"]) & set(query_colors)
+                and (
+                    not query_item_types
+                    or set(result_attributes[item.redisKey]["itemTypes"]) & set(query_item_types)
+                )
+                and (
+                    not normalized_allowed_categories
+                    or result_categories[item.redisKey] in normalized_allowed_categories
+                )
+            ]
+            # Exact description/attribute matches stay eligible even when CLIP's score is low.
+            results = color_aspect_results or color_attribute_results
+            if not results:
+                # Legacy metadata may have a wrong category, but an explicit color and item
+                # type in the description is still stronger evidence than an unrelated image.
+                results = [
+                    item
+                    for item in all_results
+                    if set(result_attributes[item.redisKey]["colors"]) & set(query_colors)
+                    and (
+                        not query_item_types
+                        or set(result_attributes[item.redisKey]["itemTypes"])
+                        & set(query_item_types)
+                    )
+                ]
+        elif aspect_results:
+            compatible_results = [
+                item
+                for item in aspect_results
+                if (not normalized_allowed_categories or result_categories[item.redisKey] in normalized_allowed_categories)
+                and (
+                    not description_keywords
+                    or self.description_matches_keywords(item.description, description_keywords)
+                )
+            ]
+            results = compatible_results or aspect_results
+        else:
+            # Filters and the score floor improve precision when they match, but should not
+            # turn uncertain CLIP/category/description guesses into an empty search page.
+            results = strict_results or threshold_results or (
+                all_results if allow_low_score_fallback else []
+            )
+
+        if exact_image_hash:
+            exact_results = [
+                item for item in all_results if result_hashes.get(item.redisKey) == exact_image_hash
+            ]
+        results.sort(key=lambda item: rerank_scores.get(item.redisKey, item.score), reverse=True)
+        if exact_image_hash and exact_results:
+            exact_keys = {item.redisKey for item in exact_results}
+            results = exact_results + [item for item in results if item.redisKey not in exact_keys]
+
+        unique_results = []
+        seen_images = set()
+        for item in results:
+            image_identity = result_hashes.get(item.redisKey) or item.ossUrl or item.redisKey
+            if image_identity in seen_images:
+                continue
+            seen_images.add(image_identity)
+            unique_results.append(item)
+        return unique_results[:top_k]
+
+    def image_content_hash(self, image_data: bytes) -> str:
+        """Hash decoded pixels so metadata or file encoding changes do not hide duplicates."""
+        try:
+            with Image.open(BytesIO(image_data)) as image:
+                normalized = ImageOps.exif_transpose(image).convert("RGB")
+                digest = hashlib.sha256()
+                digest.update(normalized.width.to_bytes(4, "big"))
+                digest.update(normalized.height.to_bytes(4, "big"))
+                digest.update(normalized.tobytes())
+                return digest.hexdigest()
+        except Exception:
+            return hashlib.sha256(image_data).hexdigest()
+
+    def parse_image_metadata_response(self, response_text: str) -> tuple[str, dict]:
+        """Read structured Qwen tags while remaining compatible with plain-text responses."""
+        text = response_text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            data = None
+
+        if isinstance(data, dict):
+            description = str(data.get("description", "")).strip()
+            category = self.normalize_image_category(data.get("category"))
+            attributes = {
+                "category": category,
+                "colors": self.normalize_attribute_values(data.get("colors"), "color"),
+                "itemTypes": self.normalize_attribute_values(data.get("itemTypes"), "itemType"),
+            }
+            inferred = self.extract_image_attributes(description)
+            if category == "other":
+                attributes["category"] = inferred["category"]
+            for key in ("colors", "itemTypes"):
+                attributes[key] = list(dict.fromkeys(attributes[key] + inferred[key]))
+            return description or str(data.get("description", "")), attributes
+
+        description = response_text.strip()
+        return description, self.extract_image_attributes(description)
+
+    def normalize_attribute_values(self, values: object, attribute_type: str) -> list[str]:
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            return []
+        allowed = self.IMAGE_ATTRIBUTE_PROMPTS[attribute_type]
+        aliases = {
+            "color": {
+                "黑色": "black", "黑": "black", "白色": "white", "白": "white",
+                "蓝色": "blue", "蓝": "blue", "红色": "red", "红": "red",
+                "绿色": "green", "绿": "green", "黄色": "yellow", "黄": "yellow",
+                "粉色": "pink", "粉": "pink", "紫色": "purple", "紫": "purple",
+                "灰色": "gray", "灰": "gray", "棕色": "brown", "咖色": "brown",
+            },
+            "itemType": {
+                "连衣裙": "dress", "裙子": "dress", "裙": "dress", "衬衫": "shirt",
+                "外套": "coat", "大衣": "coat", "夹克": "coat", "裤子": "pants",
+                "裤": "pants", "上衣": "top", "t恤": "top", "毛衣": "top",
+                "鞋子": "shoes", "鞋": "shoes", "靴子": "shoes", "包包": "bag", "包": "bag",
+            },
+        }.get(attribute_type, {})
+        normalized = []
+        for value in values:
+            token = str(value).strip().lower()
+            matches = [aliases.get(token, token)]
+            if token not in aliases and token not in allowed:
+                matches = [
+                    aliases[alias]
+                    for alias in sorted(aliases, key=len, reverse=True)
+                    if alias.lower() in token
+                ]
+            for match in matches:
+                if match in allowed and match not in normalized:
+                    normalized.append(match)
+        return normalized
+
+    def extract_image_attributes(self, description: str) -> dict:
+        colors = self.normalize_attribute_values([description], "color")
+        item_types = self.normalize_attribute_values([description], "itemType")
+        category = self.infer_image_category_from_description(description)
+        return {"category": category, "colors": colors, "itemTypes": item_types}
+
+    def normalize_image_attributes(
+        self,
+        attributes: object,
+        description: str,
+        fallback_category: str,
+    ) -> dict:
+        if not isinstance(attributes, dict):
+            attributes = {}
+        inferred = self.extract_image_attributes(description)
+        category = self.normalize_image_category(attributes.get("category", fallback_category))
+        if category == "other":
+            category = inferred["category"]
+        return {
+            "category": category,
+            "colors": list(dict.fromkeys(
+                self.normalize_attribute_values(attributes.get("colors"), "color") + inferred["colors"]
+            )),
+            "itemTypes": list(dict.fromkeys(
+                self.normalize_attribute_values(attributes.get("itemTypes"), "itemType") + inferred["itemTypes"]
+            )),
+        }
+
+    def image_attribute_score(self, query_attributes: dict, image_attributes: dict) -> float:
+        """Use uncertain visual labels as small ranking hints, never as hard filters."""
+        bonus = 0.0
+        query_category = query_attributes.get("category")
+        image_category = image_attributes.get("category")
+        if query_category in self.VALID_IMAGE_CATEGORIES - {"other"}:
+            bonus += 0.06 if query_category == image_category else -0.025
+
+        for key, matching_bonus, mismatch_penalty in (
+            ("colors", 0.08, 0.035),
+            ("itemTypes", 0.08, 0.025),
+        ):
+            query_values = set(query_attributes.get(key, []))
+            image_values = set(image_attributes.get(key, []))
+            if query_values and image_values:
+                bonus += matching_bonus if query_values & image_values else -mismatch_penalty
+        return bonus
+
+    def infer_query_image_attributes(self, query_vector: list[float]) -> dict:
+        """Classify broad image attributes in one local CLIP text batch for reranking."""
+        try:
+            labels = []
+            prompts = []
+            for group_name, group in self.IMAGE_ATTRIBUTE_PROMPTS.items():
+                for label, prompt in group.items():
+                    labels.append((group_name, label))
+                    prompts.append(prompt)
+            text_vectors = self.encode_text_batch(prompts)
+        except Exception as exc:
+            print(f"查询图片属性识别失败，改用 CLIP 相似度排序：{exc}")
+            return {}
+
+        grouped_scores: dict[str, list[tuple[str, float]]] = {}
+        for (group_name, label), vector in zip(labels, text_vectors):
+            grouped_scores.setdefault(group_name, []).append(
+                (label, self.cosine_similarity(query_vector, vector))
+            )
+
+        attributes = {"category": "other", "colors": [], "itemTypes": []}
+        output_keys = {"category": "category", "color": "colors", "itemType": "itemTypes"}
+        for group_name, scores in grouped_scores.items():
+            scores.sort(key=lambda item: item[1], reverse=True)
+            if not scores:
+                continue
+            best_label, best_score = scores[0]
+            margin = best_score - scores[1][1] if len(scores) > 1 else 1.0
+            if best_score < 0.16 or margin < 0.008:
+                continue
+            key = output_keys[group_name]
+            attributes[key] = best_label if group_name == "category" else [best_label]
+        return attributes
+
+    def infer_query_aspect_groups(self, query: str) -> list[list[str]]:
+        """提取可直接从图片描述验证的颜色、服装和风格词。"""
+        if not query.strip():
+            return []
+
+        aspect_groups = [
+            ["红", "红色", "鲜红", "正红", "酒红", "枣红", "玫红", "朱红", "绯红"],
+            ["橙", "橙色", "橘色", "橘红"],
+            ["黄", "黄色", "鹅黄", "姜黄"],
+            ["绿", "绿色", "墨绿", "军绿", "草绿"],
+            ["蓝", "蓝色", "浅蓝", "深蓝", "藏蓝", "天蓝"],
+            ["紫", "紫色", "浅紫", "深紫"],
+            ["粉", "粉色", "浅粉", "玫粉"],
+            ["白", "白色", "米白", "奶白", "象牙白"],
+            ["黑", "黑色", "纯黑"],
+            ["灰", "灰色", "银灰"],
+            ["棕", "棕色", "咖色", "咖啡色"],
+            ["裙", "裙子", "连衣裙", "半身裙", "百褶裙", "礼服"],
+            ["衬衫", "衬衣"],
+            ["外套", "大衣", "风衣", "夹克"],
+            ["裤", "裤子", "牛仔裤", "西裤", "短裤"],
+            ["上衣", "T恤", "针织衫", "毛衣"],
+            ["鞋", "鞋子", "靴子"],
+            ["包", "包包", "手提包", "挎包"],
+            ["休闲", "休闲风"],
+            ["通勤", "职场", "商务"],
+            ["运动", "运动风"],
+            ["复古", "复古风"],
+            ["优雅", "优雅风"],
+        ]
+        return [group for group in aspect_groups if self.contains_any(query, group)]
 
     def infer_text_query_categories(self, query: str) -> list[str] | None:
         """根据搜索文字判断应该搜索衣服、人物，还是人物穿搭图。"""
@@ -205,11 +552,11 @@ class ImageVectorIndexService:
         if has_person:
             return ["person"]
         if has_clothing:
-            return ["clothing", "outfit"]
+            return ["clothing"]
         return None
 
     def infer_image_category_from_vector(self, query_vector: list[float]) -> str:
-        """用 CLIP 零样本文本提示判断查询图片类型，图搜图先按类型过滤。"""
+        """用 CLIP 零样本文本提示估计查询图片类型。"""
         category_prompts = {
             "clothing": "服装单品 商品图 衣服 裙子 衬衫 裤子 外套",
             "person": "人物头像 人脸 半身照 肖像照片",
@@ -374,45 +721,66 @@ class ImageVectorIndexService:
         return f"data:image/{image_format};base64,{image_base64}"
 
     def describe_image(self, image_input: str) -> str:
-        """调用 Qwen-VL-Max 获取图片描述。"""
+        """调用视觉模型获取图片描述（直连 DashScope，避免 LangChain 包装层改写图片参数）。"""
         if not settings.dashscope_api_key:
-            raise RuntimeError("缺少 DASHSCOPE_API_KEY，无法调用 Qwen-VL-Max 生成图片描述")
+            raise RuntimeError("缺少 DASHSCOPE_API_KEY，无法调用视觉模型生成图片描述")
 
-        model = ChatTongyi(
-            model_name="qwen-vl-max",
-            temperature=0.0,
-            dashscope_api_key=settings.dashscope_api_key,
-        )
-        response = model.invoke(
-            [
-                HumanMessage(
-                    content=[
+        import dashscope
+        from dashscope import MultiModalConversation
+
+        if settings.dashscope_base_http_api_url:
+            dashscope.base_http_api_url = settings.dashscope_base_http_api_url
+
+        response = MultiModalConversation.call(
+            api_key=settings.dashscope_api_key,
+            model="qwen3.7-flash",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
                         {"image": image_input},
                         {
                             "text": (
-                                "请用一句中文简要描述这张图片的服装、人物、颜色、风格和场景，"
-                                "最后给出 3 到 5 个关键词，用逗号分隔。"
+                                "请识别图片并只返回一个 JSON 对象，不要 Markdown。字段为："
+                                "description（中文简述），category（clothing/person/outfit/other），"
+                                "colors（数组，只能含 black/white/blue/red/green/yellow/pink/purple/gray/brown），"
+                                "itemTypes（数组，只能含 dress/shirt/coat/pants/top/shoes/bag）。"
+                                "人物穿着服装的图片 category 用 outfit；纯服装商品图用 clothing。"
+                                "看不清的属性返回空数组，不要猜。"
                             )
                         },
-                    ]
-                )
-            ]
+                    ],
+                }
+            ],
         )
-        return self.extract_text(response.content)
+
+        if getattr(response, "status_code", 200) != 200:
+            raise RuntimeError(
+                f"视觉模型调用失败：{response.status_code} {response.code} {response.message}"
+            )
+
+        choices = response.output.choices or []
+        if not choices:
+            raise RuntimeError("视觉模型没有返回内容")
+
+        return self.extract_text(choices[0].message.content)
 
     def encode_text(self, text: str) -> list[float]:
         """调用本地 CLIP 模型，把文字转换成向量。"""
+        return self.encode_text_batch([text])[0]
+
+    def encode_text_batch(self, texts: list[str]) -> list[list[float]]:
+        """用一次 CLIP 前向计算编码多条文本，供图像属性判断复用。"""
         model, processor = self.load_clip_model()
 
         import torch
 
-        inputs = processor(text=[text], return_tensors="pt", padding=True, truncation=True)
+        inputs = processor(text=texts, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             features = self.extract_feature_tensor(model.get_text_features(**inputs))
             features = features / features.norm(dim=-1, keepdim=True)
 
-        vector = features[0].cpu().tolist()
-        return [float(value) for value in vector]
+        return [[float(value) for value in vector] for vector in features.cpu().tolist()]
 
     def encode_image(self, image_data: bytes) -> list[float]:
         """调用本地 CLIP 模型，把图片转换成向量。"""

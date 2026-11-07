@@ -40,15 +40,19 @@ class ImageVectorSearchApiTest(unittest.TestCase):
 
         self.original_encode_text = ImageVectorIndexService.encode_text
         self.original_encode_image = ImageVectorIndexService.encode_image
-        self.original_infer_image_category = ImageVectorIndexService.infer_image_category_from_vector
+        self.original_infer_query_image_attributes = ImageVectorIndexService.infer_query_image_attributes
         ImageVectorIndexService.encode_text = lambda _self, _text: [1.0, 0.0, 0.0]
         ImageVectorIndexService.encode_image = lambda _self, _image_data: [0.0, 1.0, 0.0]
-        ImageVectorIndexService.infer_image_category_from_vector = lambda _self, _query_vector: "clothing"
+        ImageVectorIndexService.infer_query_image_attributes = lambda _self, _query_vector: {
+            "category": "clothing",
+            "colors": ["black"],
+            "itemTypes": ["coat"],
+        }
 
     def tearDown(self) -> None:
         ImageVectorIndexService.encode_text = self.original_encode_text
         ImageVectorIndexService.encode_image = self.original_encode_image
-        ImageVectorIndexService.infer_image_category_from_vector = self.original_infer_image_category
+        ImageVectorIndexService.infer_query_image_attributes = self.original_infer_query_image_attributes
 
         index_key = self.vector_service.build_user_index_key(self.user.id)
         for key in self.redis_keys:
@@ -94,7 +98,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         self.assertEqual(self.white_url, body["data"]["results"][0]["ossUrl"])
         self.assertEqual(1, body["data"]["total"])
 
-    def test_text_search_for_clothing_item_includes_outfits_but_excludes_portraits(self) -> None:
+    def test_text_search_for_clothing_item_excludes_person_and_outfit_images(self) -> None:
         skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
         face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
         outfit_url = f"https://oss.example.com/{uuid.uuid4().hex}-outfit.png"
@@ -113,7 +117,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         result_urls = [item["ossUrl"] for item in body["data"]["results"]]
         self.assertIn(skirt_url, result_urls)
         self.assertNotIn(face_url, result_urls)
-        self.assertIn(outfit_url, result_urls)
+        self.assertNotIn(outfit_url, result_urls)
 
     def test_text_search_for_person_wearing_clothes_returns_outfit_images(self) -> None:
         skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
@@ -134,22 +138,6 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         result_urls = [item["ossUrl"] for item in body["data"]["results"]]
         self.assertEqual([outfit_url], result_urls)
 
-    def test_text_search_falls_back_when_legacy_metadata_filters_all_candidates(self) -> None:
-        legacy_url = f"https://oss.example.com/{uuid.uuid4().hex}-legacy-red-skirt.png"
-        self._save_vector(legacy_url, "红色裙子", [1.0, 0.0, 0.0], "clothing")
-
-        results = self.vector_service.search_similar_images(
-            user_id=self.user.id,
-            query_vector=[1.0, 0.0, 0.0],
-            top_k=10,
-            allowed_categories=["outfit"],
-            description_keywords=["裙"],
-        )
-
-        # The old record is still a strong CLIP match even though its stored category
-        # conflicts with the inferred query category.
-        self.assertIn(legacy_url, [item.ossUrl for item in results])
-
     def test_search_by_image_returns_most_similar_image_first(self) -> None:
         face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
         self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [0.0, 1.0, 0.0], "person")
@@ -165,7 +153,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(200, body["code"])
         self.assertEqual(self.black_url, body["data"]["results"][0]["ossUrl"])
-        self.assertEqual(1, body["data"]["total"])
+        self.assertEqual(2, body["data"]["total"])
         self.assertNotEqual(face_url, body["data"]["results"][0]["ossUrl"])
 
 

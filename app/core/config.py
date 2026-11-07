@@ -43,7 +43,7 @@ class Settings:
 
         # 阿里百炼 / DashScope 模型配置，用来调用 qwen-vl-max。
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
-
+        self.dashscope_base_http_api_url = os.getenv("DASHSCOPE_BASE_HTTP_API_URL", "").strip()
         # 阿里 OSS 预留配置，申请完成后再填。
         self.oss_endpoint = os.getenv("OSS_ENDPOINT", "")
         self.oss_bucket = os.getenv("OSS_BUCKET", "")
