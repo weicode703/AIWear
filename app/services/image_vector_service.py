@@ -133,6 +133,7 @@ class ImageVectorIndexService:
         index_key = self.build_user_index_key(user_id)
         redis_keys = self.redis_client.smembers(index_key)
         results: list[ImageSearchResultItem] = []
+        score_candidates: list[ImageSearchResultItem] = []
         score_threshold = settings.image_search_min_score if min_score is None else min_score
         normalized_allowed_categories = (
             {
@@ -162,6 +163,14 @@ class ImageVectorIndexService:
             if score < score_threshold:
                 continue
 
+            item = ImageSearchResultItem(
+                redisKey=redis_key,
+                ossUrl=str(payload.get("ossUrl", "")),
+                description=str(payload.get("description", "")),
+                score=round(score, 6),
+            )
+            score_candidates.append(item)
+
             description = str(payload.get("description", ""))
             image_category = self.normalize_image_category(payload.get("imageCategory"))
             if image_category == "other":
@@ -176,16 +185,13 @@ class ImageVectorIndexService:
             ):
                 continue
 
-            results.append(
-                ImageSearchResultItem(
-                    redisKey=redis_key,
-                    ossUrl=str(payload.get("ossUrl", "")),
-                    description=description,
-                    score=round(score, 6),
-                )
-            )
+            results.append(item)
 
         results.sort(key=lambda item: item.score, reverse=True)
+        if not results and (normalized_allowed_categories or description_keywords):
+            # Legacy indexes can have missing or inaccurate category/description metadata.
+            score_candidates.sort(key=lambda item: item.score, reverse=True)
+            results = score_candidates
         return results[:top_k]
 
     def infer_text_query_categories(self, query: str) -> list[str] | None:

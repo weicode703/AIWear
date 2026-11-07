@@ -134,6 +134,22 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         result_urls = [item["ossUrl"] for item in body["data"]["results"]]
         self.assertEqual([outfit_url], result_urls)
 
+    def test_text_search_falls_back_when_legacy_metadata_filters_all_candidates(self) -> None:
+        legacy_url = f"https://oss.example.com/{uuid.uuid4().hex}-legacy-red-skirt.png"
+        self._save_vector(legacy_url, "红色裙子", [1.0, 0.0, 0.0], "clothing")
+
+        results = self.vector_service.search_similar_images(
+            user_id=self.user.id,
+            query_vector=[1.0, 0.0, 0.0],
+            top_k=10,
+            allowed_categories=["outfit"],
+            description_keywords=["裙"],
+        )
+
+        # The old record is still a strong CLIP match even though its stored category
+        # conflicts with the inferred query category.
+        self.assertIn(legacy_url, [item.ossUrl for item in results])
+
     def test_search_by_image_returns_most_similar_image_first(self) -> None:
         face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
         self._save_vector(face_url, "人物为一位女性，黑色背景，人像照片", [0.0, 1.0, 0.0], "person")
