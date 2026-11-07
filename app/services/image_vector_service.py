@@ -205,7 +205,7 @@ class ImageVectorIndexService:
         if has_person:
             return ["person"]
         if has_clothing:
-            return ["clothing"]
+            return ["clothing", "outfit"]
         return None
 
     def infer_image_category_from_vector(self, query_vector: list[float]) -> str:

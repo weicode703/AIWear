@@ -94,7 +94,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         self.assertEqual(self.white_url, body["data"]["results"][0]["ossUrl"])
         self.assertEqual(1, body["data"]["total"])
 
-    def test_text_search_for_clothing_item_excludes_person_and_outfit_images(self) -> None:
+    def test_text_search_for_clothing_item_includes_outfits_but_excludes_portraits(self) -> None:
         skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
         face_url = f"https://oss.example.com/{uuid.uuid4().hex}-face.png"
         outfit_url = f"https://oss.example.com/{uuid.uuid4().hex}-outfit.png"
@@ -113,7 +113,7 @@ class ImageVectorSearchApiTest(unittest.TestCase):
         result_urls = [item["ossUrl"] for item in body["data"]["results"]]
         self.assertIn(skirt_url, result_urls)
         self.assertNotIn(face_url, result_urls)
-        self.assertNotIn(outfit_url, result_urls)
+        self.assertIn(outfit_url, result_urls)
 
     def test_text_search_for_person_wearing_clothes_returns_outfit_images(self) -> None:
         skirt_url = f"https://oss.example.com/{uuid.uuid4().hex}-skirt.png"
