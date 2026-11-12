@@ -278,13 +278,13 @@ const resetEditForm = () => {
 /* 选择图片槽：80x80 占位按钮 / 已选缩略图 + 删除按钮 */
 .edit-image-slot {
   width: 80px;
-  height: 80px;
+  height: 100px;
   flex-shrink: 0;
 }
 .edit-selected-wrap {
   position: relative;
   width: 80px;
-  height: 80px;
+  height: 100px;
   overflow: visible;
   cursor: pointer;
 }
@@ -303,7 +303,8 @@ const resetEditForm = () => {
 .edit-selected-img :deep(.el-image__inner) {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
+  object-fit: cover !important;
+  object-position: 50% 0% !important;
 }
 .edit-delete-btn {
   position: absolute;
@@ -333,7 +334,7 @@ const resetEditForm = () => {
 .edit-select-btn {
   flex-shrink: 0;
   width: 80px;
-  height: 80px;
+  height: 100px;
   display: flex;
   flex-direction: column;
   align-items: center;
